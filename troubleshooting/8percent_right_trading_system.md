@@ -19,21 +19,26 @@
 - **매매 가능 구조로의 스키마 확장**: 기존의 '투자-지급' 1:1 매칭 구조를 탈피하여, 하나의 투자 건에 대해 소유권(수취권)이 여러 번 이전될 수 있도록 이력 관리 테이블을 설계했습니다.
 - **자금 흐름 정합성 확보**: 수취권 매매 시 빌링 시스템과 연동하여 판매자에게는 매매 대금을 정산하고, 구매자에게는 향후 발생하는 상환금을 지급하는 자동 정산 프로세스를 구현했습니다.
 
-#### 📊 원리금 수취권 매매 흐름도
-```mermaid
-sequenceDiagram
-    participant S as 판매자 (기존 투자자)
-    participant B as 구매자 (신규 투자자)
-    participant RS as 원리금 수취권 시스템
-    participant BILL as 빌링/정산 시스템
+#### 📊 샘플 ERD 설계 (Before & After)
 
-    S->>RS: 수취권 매물 등록 (잔여 원금 기준)
-    B->>RS: 수취권 매수 신청
-    RS->>BILL: 매수 대금 결제 요청
-    BILL-->>RS: 결제 완료 (구매자 포인트 차감)
-    RS->>RS: 소유권 이전 처리 (Owner S -> B)
-    RS->>BILL: 매매 대금 정산 (판매자 포인트 지급)
-    Note over RS, BILL: 향후 상환 발생 시 <br/>새로운 소유자(B)에게 이자 지급
+```mermaid
+graph TD
+    subgraph "❌ Before: 단순 1:1 투자-지급 구조"
+        B1[투자 테이블: investment]
+        B1 -- "1:1" --> B2[지급 정보: payout]
+        note1[투자자가 채권을 팔고 싶어도 <br/>지급 대상자를 변경할 구조가 부재함]
+    end
+
+    subgraph "✅ After: 수취권 매매 및 이력 관리 구조"
+        A1[투자 테이블: investment]
+        A2[원리금 수취권: right_to_receive]
+        A3[매매/이력: trading_history]
+        
+        A1 -- "1:1" --> A2
+        A2 -- "1:N" --> A3
+        
+        note2[수취권 테이블을 분리하고 <br/>매매 이력에 따라 현재 소유자를 <br/>추적하여 지급 대상을 동적 결정함]
+    end
 ```
 
 ### 💻 기술적 성과 (Technical Achievement)
