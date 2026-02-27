@@ -41,10 +41,6 @@
 
 #### **㈜티맥스핀테크** | 연구부서 선임 (팀장)
 *2023.10 ~ 2024.10 (1년 1개월)*
-*   **보험/금융 SI 프로젝트 리딩**
-    *   배달공제조합 시간제 보험 API 설계 및 개발 (배달 시작/종료, 사고 접수 연동).
-    *   조합원사 대상 시간제 보험료 정산 배치 프로그램 구축.
-    *   고객/재무 파트 요구사항 분석 및 ERD 설계.
 *   **금융 상품 팩토리 및 인프라 설계**
     *   수신/여신 상품 ERD 설계 (LG MDD 프레임워크 유사 구조) 및 Tibero 클라우드 DB 기반 정기결제 시스템 구축.
     *   사내 웹 프레임워크(**SAS, SuperApp Server**) 개발 환경 및 인프라 구축.
@@ -88,8 +84,7 @@
 *   **마켓컬리 정산 시스템**: 초기 정산 FlowChart 설계 및 통계 어드민 구축 참여.
 *   **자동화 스케줄링**: 공휴일 발생 시 상환/지급 스케줄 자동 변경 로직 구현.
 
-#### **3. 금융/보험 SI 및 플랫폼 설계 (티맥스핀테크)**
-*   **시간제 보험 정산**: 배달 플랫폼별 상이한 정산 구조를 배치 프로그램으로 규격화.
+#### **3. 금융/상품 팩토리 및 플랫폼 설계 (티맥스핀테크)**
 *   **금융 상품 팩토리**: 다양한 여신/수신 상품을 유연하게 구성할 수 있는 범용 ERD 설계.
 
 ---
@@ -100,7 +95,6 @@
 
 *   **[블루월넛]** [인프라 현대화 및 배포 자동화 (JDK 17, Gradle, OpenSearch)](troubleshooting/bluewalnut_infrastructure_improvement.md)
 *   **[블루월넛]** [레거시 프레임워크 버전 업 및 메모리 누수 최적화 (Jennifer, MAT)](troubleshooting/bluewalnut_memory_leak_optimization.md)
-*   **[티맥스핀테크]** [배달공제조합 시간제 보험 정산 시스템 구축](troubleshooting/tmax_settlement_system.md)
 *   **[에잇퍼센트]** [여신 시스템 ERD 구조 개선 (데이터 50% 절감)](troubleshooting/8percent_erd_optimization.md)
 *   **[페이레터]** [대사 배치 및 이상 거래 탐지 시스템 구축](troubleshooting/payletter_chargeback_detection.md)
 *   **[페이레터]** [대규모 빌링 테이블 인덱스 최적화 및 성능 저하 해결](troubleshooting/payletter_index_optimization.md)
