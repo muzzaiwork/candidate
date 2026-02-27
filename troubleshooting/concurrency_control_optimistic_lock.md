@@ -78,14 +78,27 @@ public class PaymentService {
         while (true) {
             attempt++;
             try {
+                // 1. 성공 시: 비즈니스 로직이 무사히 수행되면 return으로 루프를 즉시 빠져나감
                 withdrawTx(accountId, amount);
-                return; // 성공 시 종료
+                return; 
+
             } catch (ObjectOptimisticLockingFailureException e) {
+                // 2. 최대 재시도 횟수 초과 시: 예외를 던지며 루프 종료
                 if (attempt >= maxRetry) {
                     throw new IllegalStateException("CONCURRENCY_RETRY_EXCEEDED", e);
                 }
-                // 잠시 후 다시 시도 (재조회 포함)
+                
+                // 3. 충돌 시 잠시 대기 후 다시 시도 (Backoff)
+                // 바로 재시도하는 것보다 미세한 지연을 주는 것이 충돌 가능성을 낮춤
+                try {
+                    Thread.sleep(100); // 100ms 대기
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                
+                // 다음 루프에서 findById를 통해 최신 버전의 데이터를 다시 조회함 (재조회 포함)
             }
+            // 4. 기타 비즈니스 예외(예: 잔액 부족): catch되지 않고 그대로 호출자에게 전파되어 루프 종료
         }
     }
 
