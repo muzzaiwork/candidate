@@ -10,84 +10,81 @@
 - **DB 락의 한계**: 단순히 DB 트랜잭션과 유니크 키만으로는 아주 짧은 찰나에 들어오는 동시 요청을 완벽히 방어하기 어렵거나, DB 부하를 가중시킬 수 있음.
 
 ### 🛠 해결 방안 (Action)
-분산 환경에서도 안정적으로 동시성을 제어하기 위해 **Redis 분산 락(Distributed Lock)**과 **멱등성 키(Idempotency Key)**를 결합하여 해결했습니다.
+분산 환경에서도 데이터 정합성을 보장하기 위해 **DB Unique 제약 조건**과 **멱등성(Idempotency)** 기반의 로직으로 해결했습니다.
 
-#### 1. Redis 분산 락 (Redisson 활용)
-- **원리**: 결제 고유 번호(TID 등)를 키로 사용하여 Redis에 락을 획득한 요청만 로직을 수행하도록 제한.
-- **장점**: DB에 쿼리를 날리기 전 어플리케이션 계층에서 1차적으로 중복 요청을 차단하여 DB 부하 감소 및 처리 속도 향상.
-- **Redisson 채택 이유**: Pub/Sub 기반의 락 구현으로 스핀 락(Spin Lock) 방식보다 Redis 부하가 적고, 락의 만료 시간을 안전하게 관리할 수 있음.
+#### 1. DB Unique 제약 조건 활용
+- **원리**: 결제 테이블의 결제 고유 번호(TID)에 `UNIQUE` 인덱스를 설정하여, 애플리케이션 계층의 동시 요청이 DB에 반영되는 최종 단계에서 물리적으로 중복 생성을 차단합니다.
+- **장점**: 별도의 외부 인프라(Redis 등) 없이도 가장 확실하게 데이터 무결성을 보장할 수 있습니다.
 
-#### 2. 멱등성(Idempotency) 보장
-- **Unique Key 설정**: 결제 테이블의 결제 고유 번호(TID)에 `UNIQUE` 제약 조건을 설정하여, 분산 락이 만에 하나 실패하더라도 DB 수준에서 최종적으로 중복 데이터 생성을 방지.
-- **상태 체크**: 로직 시작 시 해당 결제 건이 이미 처리되었는지(Status 확인) 먼저 조회하여 중복 처리를 방지.
+#### 2. 상태 체크를 통한 멱등성(Idempotency) 보장
+- **로직**: 웹훅 수신 시 가장 먼저 해당 TID의 상태를 조회합니다.
+    - 이미 `COMPLETED` 상태라면 즉시 종료(Success 응답 반환).
+    - 처리 중이거나 대기 상태일 때만 비즈니스 로직을 수행합니다.
+- **예외 처리**: 동시 요청 시 먼저 커밋된 요청이 성공하고, 늦게 온 요청은 `Unique Constraint Violation` 예외가 발생합니다. 이때 해당 예외를 캐치하여 사용자에게는 성공 응답을 보내되 내부적으로 중복 처리는 무시하도록 설계했습니다.
 
-#### 📊 분산 락을 이용한 웹훅 처리 흐름
+#### 📊 DB 제약 조건을 이용한 중복 방어 흐름
 ```mermaid
 sequenceDiagram
     participant PG as PG사 Webhook
     participant App as 빌링 서버
-    participant Redis as Redis (Distributed Lock)
-    participant DB as 결제 DB
+    participant DB as 결제 DB (TID Unique)
 
     PG->>App: 결제 완료 알림 (Req 1)
     PG->>App: 결제 완료 알림 (Req 2 - 따닥)
 
-    App->>Redis: Lock 획득 시도 (Key: TID_123)
-    Note over App, Redis: Req 1이 먼저 락 점유
+    App->>DB: TID 상태 조회 (Req 1)
+    DB-->>App: 처리 전 상태 확인
 
-    Redis-->>App: Lock 획득 성공 (Req 1)
-    
-    App->>Redis: Lock 획득 시도 (Key: TID_123)
-    Redis-->>App: Lock 획득 실패 (Req 2 - 대기 또는 종료)
+    App->>DB: TID 상태 조회 (Req 2)
+    DB-->>App: 처리 전 상태 확인 (동시 조회)
 
-    App->>DB: 결제 상태 조회 및 충전 처리 (Req 1)
-    DB-->>App: 처리 완료
+    App->>DB: 결제 완료 처리 (Req 1 - INSERT/UPDATE)
+    Note over DB: Req 1 성공 및 커밋
+
+    App->>DB: 결제 완료 처리 (Req 2 - INSERT/UPDATE)
+    Note over DB: Unique Key 충돌 발생! (Error)
     
-    App->>Redis: Lock 해제 (Req 1)
-    
-    Note over App: Req 2는 이미 처리된 건임을 확인하고 무시
+    DB-->>App: Unique Constraint Violation
+    Note over App: 예외 캐치 후 "정상 처리"로 응답 반환
 ```
 
-### 💻 코드 예시 (Java / Redisson)
+### 💻 코드 예시 (Java / Spring Data JPA)
 
 ```java
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class WebhookService {
-    private final RedissonClient redissonClient;
     private final PaymentRepository paymentRepository;
 
+    @Transactional
     public void processWebhook(String tid, PaymentData data) {
-        String lockKey = "LOCK:PAYMENT:" + tid;
-        RLock lock = redissonClient.getLock(lockKey);
-
         try {
-            // 1. 락 획득 시도 (최대 5초 대기, 10초 후 자동 해제)
-            if (lock.tryLock(5, 10, TimeUnit.SECONDS)) {
-                try {
-                    // 2. 멱등성 체크: 이미 처리된 결제인지 확인
-                    if (paymentRepository.existsByTidAndStatus(tid, Status.COMPLETED)) {
-                        log.info("이미 처리된 결제 건입니다. TID: {}", tid);
-                        return;
-                    }
+            // 1. 멱등성 체크: 이미 처리된 결제인지 확인
+            Payment payment = paymentRepository.findByTid(tid)
+                    .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND"));
 
-                    // 3. 실제 비즈니스 로직 수행 (충전, 상태 변경 등)
-                    executePaymentCompletion(tid, data);
-                    
-                } finally {
-                    lock.unlock(); // 락 해제
-                }
-            } else {
-                log.warn("락 획득 실패 - 중복 요청 가능성 있음. TID: {}", tid);
+            if (payment.isCompleted()) {
+                log.info("이미 완료된 결제 건입니다. TID: {}", tid);
+                return;
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+
+            // 2. 실제 비즈니스 로직 수행 (상태 변경 및 충전 등)
+            // DB 레벨의 UNIQUE 제약 조건에 의해 동시 요청 시 한 건만 성공함
+            payment.complete(data);
+            paymentRepository.saveAndFlush(payment);
+
+        } catch (DataIntegrityViolationException e) {
+            // 3. 중복 키 예외 발생 시 (동시 요청 상황)
+            log.warn("중복된 웹훅 요청이 감지되었습니다. (Unique Constraint Violation) TID: {}", tid);
+            // 이미 먼저 온 요청이 처리 중이거나 완료되었으므로, 
+            // 호출자(PG)에게는 성공 응답을 주어 재시도를 방지함
         }
     }
 }
 ```
 
 ### ✨ 성과 및 결과 (Result)
-- **중복 결제 사고 제로(Zero)**: 초당 수백 건의 웹훅이 몰리는 상황에서도 데이터 부정합 및 중복 충전 이슈를 완벽히 해결.
-- **시스템 안정성 향상**: DB 트랜잭션 격리 수준에 의존하지 않고도 어플리케이션 계층에서 동시성을 제어하여 DB 데드락(Deadlock) 위험 감소.
-- **운영 신뢰도 확보**: 결제 시스템의 가장 민감한 이슈인 '중복 결제'를 원천 차단하여 대외 고객사와의 신뢰 관계 강화.
+- **중복 결제 사고 제로(Zero)**: 초당 수백 건의 웹훅이 몰리는 상황에서도 DB 제약 조건을 활용해 데이터 정합성을 완벽히 유지.
+- **인프라 비용 효율화**: 별도의 캐시 서버(Redis)를 구축/운영하지 않고도 DB의 핵심 기능을 활용하여 동시성 이슈 해결.
+- **시스템 안정성 확보**: 예외 핸들링을 통한 멱등성 보장으로 PG사의 재시도 요청을 효과적으로 제어하고 운영 리소스 절감.
