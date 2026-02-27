@@ -20,9 +20,10 @@
 - **장점**: 별도의 외부 인프라(Redis 등) 없이도 가장 확실하게 데이터 무결성을 보장할 수 있습니다.
 
 #### 2. 상태 체크를 통한 멱등성(Idempotency) 보장
-- **로직**: 웹훅 수신 시 가장 먼저 해당 TID의 상태를 조회합니다.
-    - 이미 `COMPLETED` 상태라면 즉시 종료(Success 응답 반환).
-    - 처리 중이거나 대기 상태일 때만 비즈니스 로직을 수행합니다.
+- **로직**: 웹훅 수신 시 가장 먼저 해당 TID를 키로 하여 **현재 결제 진행 상태(status)**를 조회합니다.
+    - 단순히 행(Row)의 존재 여부만 확인하는 것이 아니라, 비즈니스적으로 `COMPLETED`(완료) 혹은 `CANCELED`(취소) 등 이미 최종 처리가 끝난 상태인지를 확인합니다.
+    - 이미 `COMPLETED` 상태라면 중복 처리하지 않고 즉시 종료(Success 응답 반환).
+    - 처리 전(`PENDING` 등) 상태일 때만 실제 충전 및 상태 변경 로직을 수행합니다.
 - **예외 처리**: 동시 요청 시 먼저 커밋된 요청이 성공하고, 늦게 온 요청은 `Unique Constraint Violation` 예외가 발생합니다. 이때 해당 예외를 캐치하여 사용자에게는 성공 응답을 보내되 내부적으로 중복 처리는 무시하고, 사내 메신저(Slack 등)로 중복 감지 알림을 발송하도록 설계했습니다.
 
 #### 📊 DB 제약 조건을 이용한 중복 방어 흐름
@@ -35,16 +36,16 @@ sequenceDiagram
     PG->>App: 결제 완료 알림 (Req 1)
     PG->>App: 결제 완료 알림 (Req 2 - 따닥)
 
-    App->>DB: TID 상태 조회 (Req 1)
-    DB-->>App: 처리 전 상태 확인
+    App->>DB: 현재 결제 상태 조회 (Req 1)
+    DB-->>App: 'PENDING' 상태 확인
 
-    App->>DB: TID 상태 조회 (Req 2)
-    DB-->>App: 처리 전 상태 확인 (동시 조회)
+    App->>DB: 현재 결제 상태 조회 (Req 2)
+    DB-->>App: 'PENDING' 상태 확인 (동시 조회)
 
-    App->>DB: 결제 완료 처리 (Req 1 - INSERT/UPDATE)
+    App->>DB: 결제 상태 'COMPLETED'로 변경 (Req 1)
     Note over DB: Req 1 성공 및 커밋
 
-    App->>DB: 결제 완료 처리 (Req 2 - INSERT/UPDATE)
+    App->>DB: 결제 상태 'COMPLETED'로 변경 (Req 2)
     Note over DB: Unique Key 충돌 발생! (Error)
     
     DB-->>App: Unique Constraint Violation
