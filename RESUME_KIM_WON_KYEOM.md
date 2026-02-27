@@ -50,8 +50,9 @@
 #### **㈜에잇퍼센트** | 코어뱅킹팀 (사원)
 *2022.06 ~ 2023.09 (1년 3개월)*
 *   **여신 시스템 운영 및 대규모 데이터 최적화**
-    *   ERD 구조 개선 및 리팩토링으로 **데이터 중복 50% 이상 감소** (21억 건 → 10억 건 이하).
-    *   원리금 수취권 매매, 기한이익상실, 일부금액 중도상환 등 복잡한 금융 로직 개발.
+    *   여신 시스템 운영 및 대규모 데이터 최적화 (21억 건 → 10억 건 이하).
+    *   **원리금 수취권 매매 시스템 구축**: 투자 유동성 확보를 위한 채권 매매 로직 및 빌링 연동 설계.
+    *   기한이익상실, 일부금액 중도상환 등 복잡한 금융 로직 개발.
     *   **낙관적 락(Optimistic Lock) 도입**: 동시 출금 및 결제 상황에서의 데이터 정합성 보장 및 재시도 로직 구현.
     *   대출 실행부터 상환, 지급까지의 **자금 흐름 추적성(Traceability)** 개선.
 *   **운영 효율성 및 규제 대응**
@@ -99,6 +100,7 @@
 *   **[블루월넛]** [OpenSearch 로그 포맷 공통화 및 통합 모니터링 체계 구축](troubleshooting/bluewalnut_opensearch_log_unification.md)
 *   **[블루월넛]** [레거시 프레임워크 버전 업 및 메모리 누수 최적화 (Jennifer, MAT)](troubleshooting/bluewalnut_memory_leak_optimization.md)
 *   **[에잇퍼센트]** [여신 시스템 ERD 구조 개선 (데이터 50% 절감)](troubleshooting/8percent_erd_optimization.md)
+*   **[에잇퍼센트]** [P2P 원리금 수취권 매매 시스템 및 유동성 개선](troubleshooting/8percent_right_trading_system.md)
 *   **[페이레터]** [대사 배치 및 이상 거래 탐지 시스템 구축](troubleshooting/payletter_chargeback_detection.md)
 *   **[페이레터]** [대규모 빌링 테이블 인덱스 최적화 및 성능 저하 해결](troubleshooting/payletter_index_optimization.md)
 *   **[공통]** [낙관적 락(Optimistic Lock)을 이용한 결제 동시성 제어](troubleshooting/concurrency_control_optimistic_lock.md)
