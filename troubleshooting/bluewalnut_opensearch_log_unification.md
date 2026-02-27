@@ -21,7 +21,66 @@
 - **Logback 설정 공유**: 어플리케이션 계층에서 표준 포맷으로 로그를 남길 수 있도록 가이드를 제작하고 공통 라이브러리/설정(ConsoleAppender, FileAppender)을 배포함.
 - **Fluentd 에이전트 도입**: 각 서버에 Fluentd를 설치하여 실시간으로 로그 파일을 읽어(Tail) OpenSearch로 안전하게 전송하도록 구성함.
 
-#### 3. 모니터링 대시보드 및 알림 연동
+#### 3. Fluentd 설정 및 Index 샘플
+구체적인 수집 설정과 인덱스 매핑 스펙을 사내 공통 가이드로 배포하여 데이터 정합성을 확보함.
+
+##### 🔧 Fluentd Configuration (Sample)
+```apache
+# 1. 로그 소스 정의 (Tail)
+<source>
+  @type tail
+  path /app/logs/application-json.log
+  pos_file /var/log/td-agent/app-log.pos
+  tag app.http.logs
+  <parse>
+    @type json # Logback에서 생성한 JSON 포맷 파싱
+    time_key timestamp
+    time_format %Y-%m-%dT%H:%M:%S.%L%z
+  </parse>
+</source>
+
+# 2. 필터링 및 데이터 가공
+<filter app.**>
+  @type record_transformer
+  <record>
+    hostname "#{Socket.gethostname}" # 서버 호스트 정보 추가
+    service_name "payment-api"       # 서비스 식별값 추가
+  </record>
+</filter>
+
+# 3. OpenSearch 전송 (Match)
+<match app.**>
+  @type opensearch
+  hosts https://opensearch-cluster:9200
+  user admin
+  password password
+  index_name log-bluewalnut-%Y.%m.%d
+  <buffer>
+    flush_interval 5s # 5초 단위로 벌크 전송
+  </buffer>
+</match>
+```
+
+##### 📊 OpenSearch Index Mapping (Sample)
+```json
+{
+  "mappings": {
+    "properties": {
+      "timestamp": { "type": "date" },
+      "hostname": { "type": "keyword" },
+      "service_name": { "type": "keyword" },
+      "method": { "type": "keyword" },      // HTTP Method
+      "url": { "type": "keyword" },         // Request URL
+      "status_code": { "type": "integer" }, // HTTP 상태 코드
+      "response_time": { "type": "float" }, // 응답 속도 (ms)
+      "interface_id": { "type": "keyword" },// EAI 인터페이스 ID
+      "error_message": { "type": "text" }   // 에러 상세 내용
+    }
+  }
+}
+```
+
+#### 4. 모니터링 대시보드 및 알림 연동
 - **OpenSearch Dashboards**: 시각화 도구를 활용하여 주요 지표를 한눈에 볼 수 있는 통합 대시보드 구축.
 - **장애 알림**: 특정 임계치(예: HTTP 500 에러 분당 10건 이상) 초과 시 슬랙(Slack) 등 메신저로 즉시 알림이 발송되도록 연동.
 
