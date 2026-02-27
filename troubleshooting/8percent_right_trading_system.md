@@ -23,21 +23,21 @@
 
 ```mermaid
 graph TD
-    subgraph "❌ Before: 단순 1:1 투자-지급 구조"
-        B1[투자 테이블: investment]
-        B1 -- "1:1" --> B2[지급 정보: payout]
-        note1[투자자가 채권을 팔고 싶어도 <br/>지급 대상자를 변경할 구조가 부재함]
-    end
-
     subgraph "✅ After: 수취권 매매 및 이력 관리 구조"
         A1[투자 테이블: investment]
         A2[원리금 수취권: right_to_receive]
         A3[매매/이력: trading_history]
-        
+
         A1 -- "1:1" --> A2
         A2 -- "1:N" --> A3
-        
+
         note2[수취권 테이블을 분리하고 <br/>매매 이력에 따라 현재 소유자를 <br/>추적하여 지급 대상을 동적 결정함]
+    end
+    
+    subgraph "❌ Before: 단순 1:1 투자-지급 구조"
+        B1[투자 테이블: investment]
+        B1 -- "1:1" --> B2[지급 정보: payout]
+        note1[투자자가 채권을 팔고 싶어도 <br/>지급 대상자를 변경할 구조가 부재함]
     end
 ```
 
