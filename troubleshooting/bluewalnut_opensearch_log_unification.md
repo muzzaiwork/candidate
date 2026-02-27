@@ -88,6 +88,35 @@
 - **OpenSearch Dashboards**: 시각화 도구를 활용하여 주요 지표를 한눈에 볼 수 있는 통합 대시보드 구축.
 - **장애 알림**: 특정 임계치(예: HTTP 500 에러 분당 10건 이상) 초과 시 슬랙(Slack) 등 메신저로 즉시 알림이 발송되도록 연동.
 
+##### 🚨 장애 감지 Monitor & Trigger 쿼리 (Sample)
+OpenSearch의 Alerting 플러그인을 사용하여 장애를 감지할 때 사용하는 쿼리 예시입니다.
+
+**[Monitor] 특정 서비스의 HTTP 500 에러 집계**
+```json
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        { "term": { "service_name": "payment-api" } },
+        { "term": { "status_code": 500 } },
+        { "range": { "timestamp": { "from": "now-1m" } } } // 최근 1분간
+      ]
+    }
+  },
+  "aggs": {
+    "error_count": { "value_count": { "field": "status_code" } }
+  }
+}
+```
+
+**[Trigger] 임계치 초과 조건 (Painless Script)**
+분당 10건 이상 발생 시 알림을 트리거합니다.
+```painless
+// Trigger condition
+ctx.results[0].aggregations.error_count.value >= 10
+```
+
 ### 📊 로그 수집 및 모니터링 흐름도
 
 ```mermaid
