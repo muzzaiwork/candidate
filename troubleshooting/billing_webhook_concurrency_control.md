@@ -20,7 +20,7 @@
 - **로직**: 웹훅 수신 시 가장 먼저 해당 TID의 상태를 조회합니다.
     - 이미 `COMPLETED` 상태라면 즉시 종료(Success 응답 반환).
     - 처리 중이거나 대기 상태일 때만 비즈니스 로직을 수행합니다.
-- **예외 처리**: 동시 요청 시 먼저 커밋된 요청이 성공하고, 늦게 온 요청은 `Unique Constraint Violation` 예외가 발생합니다. 이때 해당 예외를 캐치하여 사용자에게는 성공 응답을 보내되 내부적으로 중복 처리는 무시하도록 설계했습니다.
+- **예외 처리**: 동시 요청 시 먼저 커밋된 요청이 성공하고, 늦게 온 요청은 `Unique Constraint Violation` 예외가 발생합니다. 이때 해당 예외를 캐치하여 사용자에게는 성공 응답을 보내되 내부적으로 중복 처리는 무시하고, 사내 메신저(Slack 등)로 중복 감지 알림을 발송하도록 설계했습니다.
 
 #### 📊 DB 제약 조건을 이용한 중복 방어 흐름
 ```mermaid
@@ -56,6 +56,7 @@ sequenceDiagram
 @Slf4j
 public class WebhookService {
     private final PaymentRepository paymentRepository;
+    private final NotificationService notificationService;
 
     @Transactional
     public void processWebhook(String tid, PaymentData data) {
@@ -77,6 +78,10 @@ public class WebhookService {
         } catch (DataIntegrityViolationException e) {
             // 3. 중복 키 예외 발생 시 (동시 요청 상황)
             log.warn("중복된 웹훅 요청이 감지되었습니다. (Unique Constraint Violation) TID: {}", tid);
+            
+            // 4. 장애 대응 및 모니터링을 위한 알림 발송 (Slack 등)
+            notificationService.sendAlert("웹훅 중복 감지 - TID: " + tid);
+            
             // 이미 먼저 온 요청이 처리 중이거나 완료되었으므로, 
             // 호출자(PG)에게는 성공 응답을 주어 재시도를 방지함
         }
@@ -87,4 +92,4 @@ public class WebhookService {
 ### ✨ 성과 및 결과 (Result)
 - **중복 결제 사고 제로(Zero)**: 초당 수백 건의 웹훅이 몰리는 상황에서도 DB 제약 조건을 활용해 데이터 정합성을 완벽히 유지.
 - **인프라 비용 효율화**: 별도의 캐시 서버(Redis)를 구축/운영하지 않고도 DB의 핵심 기능을 활용하여 동시성 이슈 해결.
-- **시스템 안정성 확보**: 예외 핸들링을 통한 멱등성 보장으로 PG사의 재시도 요청을 효과적으로 제어하고 운영 리소스 절감.
+- **시스템 안정성 및 모니터링 강화**: 예외 핸들링을 통한 멱등성 보장으로 PG사의 재시도 요청을 효과적으로 제어하고, 실시간 알림 연동을 통해 중복 요청 발생 현황을 즉각적으로 파악하여 운영 리소스 절감.
