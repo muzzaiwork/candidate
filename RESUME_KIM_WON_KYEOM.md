@@ -38,7 +38,7 @@
 *   **인프라 및 로그 시스템 개선**
     *   **CI/CD 환경 이관 및 Java 1.7 → JDK 17 업그레이드**: SVN → Git/Jenkins 이관, 빌드 도구 현대화(**ANT → Gradle**), 전체 API 테스트 코드 적용 및 **crontab → Spring Scheduler** 전환.
     *   **프레임워크 고도화 및 성능 최적화**: 레거시 프레임워크 버전 업 및 **Full GC 분석(잔여 메모리 증가 확인)을 통한 Jennifer 기반 메모리 누수 해결(Eclipse MAT 활용)**.
-    *   **로그 및 모니터링**: 사내 로그 시스템을 **OpenSearch**로 통합 구축하여 **서버 직접 접속 없이 실시간 로그 확인 가능(보안 감사 리스크 해소)**, 모니터링 체계 강화.
+    *   **로그 및 모니터링**: 사내 로그 시스템을 **OpenSearch**로 통합 구축하여 **로그 포맷 공통화(HTTP, TCP, EAI) 및 통합 모니터링 대시보드** 구현, 서버 직접 접속 없이 실시간 로그 확인 가능(보안 감사 리스크 해소).
 
 #### **㈜티맥스핀테크** | 연구부서 선임 (팀장)
 *2023.10 ~ 2024.10 (1년 1개월)*
@@ -95,7 +95,8 @@
 > [!TIP]
 > 상세한 문제 해결 사례는 아래 링크에서 확인하실 수 있습니다.
 
-*   **[블루월넛]** [인프라 현대화 및 배포 자동화 (JDK 17, Gradle, OpenSearch)](troubleshooting/bluewalnut_infrastructure_improvement.md)
+*   **[블루월넛]** [인프라 현대화 및 배포 자동화 (JDK 17, Gradle)](troubleshooting/bluewalnut_infrastructure_improvement.md)
+*   **[블루월넛]** [OpenSearch 로그 포맷 공통화 및 통합 모니터링 체계 구축](troubleshooting/bluewalnut_opensearch_log_unification.md)
 *   **[블루월넛]** [레거시 프레임워크 버전 업 및 메모리 누수 최적화 (Jennifer, MAT)](troubleshooting/bluewalnut_memory_leak_optimization.md)
 *   **[에잇퍼센트]** [여신 시스템 ERD 구조 개선 (데이터 50% 절감)](troubleshooting/8percent_erd_optimization.md)
 *   **[페이레터]** [대사 배치 및 이상 거래 탐지 시스템 구축](troubleshooting/payletter_chargeback_detection.md)
