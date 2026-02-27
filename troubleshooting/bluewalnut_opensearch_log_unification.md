@@ -73,6 +73,10 @@
       "url": { "type": "keyword" },         // Request URL
       "status_code": { "type": "integer" }, // HTTP 상태 코드
       "response_time": { "type": "float" }, // 응답 속도 (ms)
+      "source_ip": { "type": "ip" },        // TCP/IP 소스 IP
+      "dest_ip": { "type": "ip" },          // TCP/IP 목적지 IP
+      "port": { "type": "integer" },        // Port 번호
+      "payload_length": { "type": "long" }, // 데이터 길이
       "interface_id": { "type": "keyword" },// EAI 인터페이스 ID
       "error_message": { "type": "text" }   // 에러 상세 내용
     }
