@@ -87,8 +87,12 @@ graph TD
 Optimizer가 `WHERE` 조건에 있지도 않은 `reg_datetime` 인덱스를 선택한 이유는 **비용 기반 최적화(CBO)의 '착시 현상'** 때문입니다.
 
 1.  **Non-Clustered Index의 "가벼움(Density/Page Count)"에 의한 비용 오판**:
-    *   **현상**: `reg_date` 인덱스보다 새로 만든 `reg_datetime` 인덱스의 전체 페이지 수가 더 적거나 데이터 밀도가 더 높게 측정되었습니다.
-    *   **오판**: Optimizer는 "어차피 데이터를 읽어야 한다면, 페이지 수가 적고 더 얇은(가벼운) `reg_datetime` 인덱스를 통째로 스캔(`Full Index Scan`)하면서 `reg_date` 조건을 필터링하는 게 기존 인덱스로 조인하는 것보다 싸다"라고 판단했습니다. 
+    *   **구체적 수치 예시 (착시 현상)**:
+        - **기존 `reg_date` 인덱스**: 약 1,000개의 페이지로 구성. (DATE 타입의 특성상 중복도가 높아 데이터 분산도가 낮음)
+        - **신규 `reg_datetime` 인덱스**: 약 800개의 페이지로 구성. (DATETIME 타입의 세밀한 정보 덕분에 카디널리티가 높아 데이터 밀도가 더 높게 측정됨)
+    *   **Optimizer의 비용 계산**: 
+        - 기존 방식 (Index Seek on `reg_date`): 특정 날짜의 데이터를 콕 집어내기 위해 수십 개의 인덱스 페이지를 읽는 비용.
+        - 신규 방식 (**Index Scan** on `reg_datetime`): "어차피 800페이지밖에 안 되네? 기존 인덱스로 찾는 것보다, 그냥 **더 얇은(800페이지) 인덱스 전체를 한 번 훑으면서(Scan)** `reg_date` 조건에 맞는 걸 필터링하는 게 더 싸다!"라고 판단했습니다.
 
 2.  **Index Seek(기존) vs Index Scan(신규)의 비용 경합**:
     *   기존에는 `reg_date` 인덱스로 **Index Seek**를 수행했습니다. 
