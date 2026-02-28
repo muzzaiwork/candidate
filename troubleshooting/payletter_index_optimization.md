@@ -42,50 +42,50 @@ CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 
 #### 📊 Optimizer 실행 계획 변동 (조인 전략의 변화)
 
-##### **1단계: 인덱스 생성 전 (Hash Join)**
-`cash` 테이블과 `users` 테이블을 조인할 때, 대량의 데이터를 효율적으로 처리하기 위해 **Hash Join**을 사용하던 안정적인 상태입니다.
+##### **1단계: 인덱스 생성 전 (userid 인덱스 기반의 효율적인 조인)**
+조인 조건인 `userid` 컬럼에 인덱스가 있어, 특정 사용자의 결제 내역만 콕 집어내는 **Nested Loop Join**이 이미 효율적으로 작동하던 상태입니다.
 ```mermaid
 graph TD
-    subgraph "Hash Join (안정적인 일괄 처리)"
-        U["users (Build Input)"] --> H["Hash Table 생성"]
-        C["cash (Probe Input)"] --> S["Full Table Scan"]
-        S --> H
-        H --> R["결과 반환"]
-        
-        note1["cash 테이블을 순차적으로 한 번만 훑으며(Scan)<br/>해시 테이블과 대조하므로 예측 가능한 성능 유지"]
-    end
-    
-    style S fill:#ddd,stroke:#333
-```
-
-##### **2단계: 인덱스 생성 직후 (Nested Loop Join으로 오판)**
-신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 이 인덱스를 통해 데이터를 매우 빠르게 찾을 수 있다고 **오판**합니다. 이로 인해 대량 처리용 Hash Join을 버리고 건별 처리용 **Nested Loop Join**으로 전략을 변경하면서 I/O 재앙이 시작됩니다.
-
-```mermaid
-graph TD
-    subgraph "Nested Loop Join (재앙의 시작: 반복의 함정)"
+    subgraph "효율적인 Nested Loop Join (기존)"
         U_Outer["users (Outer 테이블)"] -- "1. 행 하나 읽을 때마다 (Loop)" --> C_Inner["cash (Inner 테이블)"]
         
-        C_Inner -- "2. 신규 인덱스 탐색" --> N["IX_CASH_REGDT Seek/Scan"]
-        N -- "3. 행당 1회씩 발생" --> K["Key Lookup (Random I/O)"]
-        K --> C_L["Clustered Index 접근"]
+        C_Inner -- "2. userid 인덱스 탐색" --> IX_USER["IX_CASH_USERID Seek"]
+        IX_USER -- "3. 특정 유저 데이터만 콕 집음" --> K1["Key Lookup (매우 적은 횟수)"]
+        K1 --> C_L1["Clustered Index 접근"]
         
-        note2["<b>문제의 핵심: 반복 횟수</b><br/>users 테이블이 1,000행이라면<br/>IX_CASH_REGDT 탐색 1,000번 +<br/>Key Lookup 1,000번이 강제됨"]
+        note1["<b>성능 포인트</b><br/>userid 인덱스는 특정 사용자의 데이터만<br/>정확히 타겟팅하므로 Key Lookup 횟수가<br/>사용자당 결제 건수(수 건)에 불과함"]
     end
 
-    style K fill:#f96,stroke:#333,stroke-width:2px
-    style C_L fill:#f96,stroke:#333,stroke-width:2px
+    style IX_USER fill:#6cf,stroke:#333
+```
+
+##### **2단계: 인덱스 생성 직후 (reg_datetime 인덱스로의 잘못된 전환)**
+신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 기존의 `userid` 인덱스보다 `reg_datetime` 인덱스가 '범위를 더 좁게 필터링할 수 있는 도구'라고 **오판**합니다. 이로 인해 기존의 효율적인 조인 경로를 버리고 **비효율적인 새로운 경로**를 선택하면서 재앙이 시작됩니다.
+
+```mermaid
+graph TD
+    subgraph "비효율적인 Nested Loop Join (재앙의 시작)"
+        U_Outer2["users (Outer 테이블)"] -- "1. 행 하나 읽을 때마다 (Loop)" --> C_Inner2["cash (Inner 테이블)"]
+        
+        C_Inner2 -- "2. 신규 reg_datetime 인덱스 탐색" --> IX_REG["IX_CASH_REGDT Seek"]
+        IX_REG -- "3. 해당 기간의 방대한 데이터 필터링 시도" --> K2["Key Lookup 폭증 (수만 건)"]
+        K2 --> C_L2["Clustered Index 접근 후 userid 체크"]
+        
+        note2["<b>문제의 핵심</b><br/>새 인덱스는 userid와 무관하게<br/>모든 사용자의 해당 기간 데이터를 포함하므로<br/>Key Lookup 횟수가 기하급수적으로 늘어남"]
+    end
+
+    style IX_REG fill:#f96,stroke:#333,stroke-width:2px
+    style K2 fill:#f96,stroke:#333,stroke-width:2px
 ```
 
 **왜 성능이 폭락했을까요? (실제 테이블 데이터 기반 분석)**
-- **Hash Join (1단계)**: 
-    - `users` 테이블에서 `status = 'ACTIVE'`인 1,000건을 한 번에 읽어 메모리에 해시 테이블을 만듭니다. 
-    - 그 후 `cash` 테이블을 처음부터 끝까지 **단 한 번만 스캔(Full Scan)**하면서 해시 테이블과 대조하여 짝을 맞춥니다. 
-    - 결과적으로 `cash` 테이블의 데이터가 아무리 많아도 **전체 스캔 한 번(순차 I/O)**으로 작업이 완료됩니다.
-- **Nested Loop Join (2단계)**: 
-    - `status = 'ACTIVE'`인 사용자가 1,000명이라면, Optimizer는 사용자 한 명을 읽을 때마다 `cash` 테이블의 인덱스를 뒤져 결제 내역을 찾으라고 지시합니다.
-    - 결과적으로 **신규 인덱스(IX_CASH_REGDT) 탐색 1,000번** + **테이블 본체 방문(Key Lookup) 1,000번**이라는 막대한 반복 작업이 강제됩니다. 
-- **결론**: 조인 대상인 `users`가 늘어날수록, `cash` 테이블의 인덱스를 수만 번씩 다시 열고 그 주소를 따라 실제 집(데이터 페이지)을 수만 번 무작위로 방문해야 하므로 CPU와 디스크 I/O가 감당하지 못하고 쓰러지게 됩니다.
+- **1단계 (기존 userid 인덱스 활용)**: 
+    - `users` 테이블에서 `status = 'ACTIVE'`인 사용자를 한 명 읽습니다.
+    - `cash` 테이블의 `userid` 인덱스를 통해 해당 사용자의 결제 내역(보통 수 건 내외)만 **정확히 콕 집어서** Key Lookup을 수행합니다. (매우 효율적!)
+- **2단계 (신규 reg_datetime 인덱스로 갈아탐)**: 
+    - Optimizer가 "userid 인덱스보다 날짜 인덱스가 더 효율적이겠는데?"라고 오판하여 실행 계획을 바꿉니다.
+    - 이제 사용자 한 명을 읽을 때마다, `cash` 테이블의 **날짜 인덱스**를 통해 해당 기간의 **모든 사용자 데이터**를 훑으면서 그중에 이 사용자가 맞는지 일일이 대조하게 됩니다.
+    - 이 과정에서 조인 대상인 사용자가 늘어날수록 **불필요한 Key Lookup이 중복해서 수만 번 발생**하게 되어 CPU와 디스크 I/O가 마비되었습니다.
 
 #### 1. Optimizer의 실행 계획 변동 (Execution Plan Change)
 - **핵심 원인**: "인덱스를 추가했을 뿐인데 왜 느려졌는가?"에 대한 근본적인 이유입니다.
