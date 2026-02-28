@@ -5,9 +5,31 @@
 - **기간**: 2018.09 ~ 2022.06
 
 ### ❓ 문제 상황 (Challenge)
-- **현상**: 결제 데이터가 축적된 `cash` 테이블(`cashno`가 Clustered Index/PK인 상태)의 `reg_datetime`(등록 일시) 컬럼에 조회 성능 향상을 위해 비클러스터형 인덱스(Non-Clustered Index)를 신규 생성함.
-- **문제**: 인덱스 생성 후, 기존에 잘 동작하던 쿼리들의 성능이 갑자기 급격히 저하되는 현상 발생.
-- **특이사항**: 쿼리문 자체의 변경은 없었으며, 단순 인덱스 추가만으로 Optimizer가 비효율적인 실행 계획을 선택하여 시스템 전반의 응답 속도가 느려짐.
+
+#### 1. 배경 및 초기 상태
+결제 시스템의 핵심인 `cash` 테이블은 결제 번호(`cashno`)를 PK로 가지며, 수백만 건의 데이터가 축적된 상태였습니다.
+
+```sql
+-- [초기 cash 테이블 DDL 예시]
+CREATE TABLE cash (
+    cashno INT PRIMARY KEY,        -- 결제 번호 (Clustered Index)
+    userid VARCHAR(50),            -- 사용자 ID
+    amount INT,                    -- 결제 금액
+    status TINYINT,                -- 상태 (결제완료, 취소 등)
+    reg_datetime DATETIME          -- 등록 일시
+);
+```
+
+#### 2. 성능 최적화 시도 (인덱스 추가)
+특정 기간의 결제 내역 조회가 빈번해짐에 따라, `reg_datetime` 컬럼의 조회 성능을 향상시키기 위해 **비클러스터형 인덱스(Non-Clustered Index)**를 신규 생성했습니다.
+
+```sql
+-- [reg_datetime 인덱스 생성]
+CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
+```
+
+#### 3. 예기치 못한 성능 저하 발생
+인덱스 생성 직후, 기존에 잘 동작하던 조회 쿼리들의 성능이 갑자기 급격히 저하되었습니다. 쿼리문은 동일했으나, DB의 **Optimizer(CBO)**가 예상과 다른 실행 계획을 선택하면서 시스템 전반의 응답 속도가 느려지는 이슈가 발생했습니다.
 
 ### 🔍 원인 분석 (Root Cause)
 
@@ -92,6 +114,12 @@ graph TD
 #### 2. 커버링 인덱스(Covering Index) 도입 (근본 해결)
 - 인덱스 뒷부분에 자주 조회되는 컬럼들을 포함(`INCLUDE`)시켜, 인덱스만 보고도 모든 데이터를 알 수 있게 만들었습니다.
 - 테이블 본체를 다시 뒤질 필요가 없으므로(**Key Lookup 제거**), I/O 부하가 획기적으로 줄어듭니다.
+
+```sql
+-- [커버링 인덱스 적용]
+CREATE INDEX IX_CASH_REGDT_COVERING ON cash(reg_datetime) 
+INCLUDE (userid, amount, status); -- 필요한 컬럼을 인덱스 페이지에 포함
+```
 
 #### 📊 Key Lookup vs 커버링 인덱스 비교
 ```mermaid
