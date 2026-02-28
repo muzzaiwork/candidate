@@ -7,7 +7,7 @@
 ### ❓ 문제 상황 (Challenge)
 
 #### 1. 배경 및 초기 상태
-결제 시스템의 핵심인 `cash` 테이블은 결제 번호(`cashno`)를 PK(Clustered Index)로 가지며, 수백만 건의 데이터가 축적된 상태였습니다.
+결제 시스템의 핵심인 `cash` 테이블은 결제 번호(`cashno`)를 PK(Clustered Index)로 가지며, **등록 날짜(`reg_date`, DATE 타입)**에 이미 인덱스가 생성되어 효율적으로 운영되고 있었습니다.
 
 ```sql
 -- [초기 cash 테이블 DDL 예시]
@@ -16,28 +16,32 @@ CREATE TABLE cash (
     userid VARCHAR(50),            -- 사용자 ID
     amount INT,                    -- 결제 금액
     status TINYINT,                -- 상태 (결제완료, 취소 등)
-    reg_datetime DATETIME          -- 등록 일시
+    reg_date DATE,                 -- 등록 날짜 (기존 인덱스 존재)
+    reg_datetime DATETIME          -- 등록 일시 (신규 인덱스 대상)
 );
+
+-- [기존에 존재하던 인덱스]
+CREATE INDEX IX_CASH_REGDATE ON cash(reg_date);
 ```
 
 #### 2. 성능 최적화 시도 (인덱스 추가)
-특정 배치 작업이나 통계 조회를 위해 `reg_datetime` 컬럼의 성능을 향상시키고자 **비클러스터형 인덱스(Non-Clustered Index)**를 신규 생성했습니다.
+특정 배치 작업이나 초 단위 통계 조회를 위해, `reg_date`보다 정교한 **`reg_datetime`(DATETIME 타입)** 컬럼에 신규 비클러스터형 인덱스를 생성했습니다.
 
 ```sql
--- [조회 성능 개선을 위해 신규 인덱스 생성]
+-- [신규 reg_datetime 인덱스 생성]
 CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 ```
 
-#### 3. 예기치 못한 장애 발생 (조인 쿼리 성능 폭락)
-인덱스 생성 직후, 기존에 잘 동작하던 조인 쿼리들의 성능이 갑자기 급격히 저하되었습니다. 쿼리문은 동일했으나, DB의 **Optimizer(CBO)**가 실행 계획을 변경하면서 시스템 전반의 응답 속도가 느려지는 장애가 발생했습니다.
+#### 3. 예기치 못한 장애 발생 (실행 계획의 '역전')
+인덱스 생성 직후, 기존에 `reg_date` 인덱스를 타며 잘 작동하던 조인 쿼리들의 성능이 갑자기 급격히 저하되었습니다. 쿼리문은 동일했으나, Optimizer가 **기존의 효율적인 인덱스를 버리고 신규 인덱스를 선택**하면서 장애가 발생했습니다.
 
 ```sql
 -- [장애가 발생한 조인 쿼리 예시]
--- reg_datetime 조건이 있음에도 불구하고 인덱스 생성 전후로 성능이 극명하게 갈림
+-- 기존에는 IX_CASH_REGDATE(reg_date)를 타고 안정적으로 수행되던 쿼리
 SELECT c.*, u.username
 FROM cash c
 JOIN users u ON c.userid = u.userid
-WHERE c.reg_datetime BETWEEN '2021-05-01' AND '2021-05-31'
+WHERE c.reg_date = '2021-05-01'
   AND u.status = 'ACTIVE';
 ```
 
@@ -47,34 +51,31 @@ WHERE c.reg_datetime BETWEEN '2021-05-01' AND '2021-05-31'
 
 #### 📊 Optimizer 실행 계획 변동 (조인 전략의 변화)
 
-##### **1단계: 인덱스 생성 전 (Hash Join + Clustered Scan)**
-`reg_datetime` 조건이 있어도 활용 가능한 인덱스가 없었기 때문에, 대량의 데이터를 효율적으로 처리하기 위해 **Hash Join**을 선택하여 안정적인 성능을 유지하던 상태입니다.
+##### **1단계: 인덱스 생성 전 (기존 reg_date 인덱스 활용)**
+`reg_date` 조건에 맞는 인덱스가 이미 존재하여, 이를 통해 필요한 행만 콕 집어내는 **효율적인 Nested Loop Join**이 안정적으로 수행되던 상태입니다.
 ```mermaid
 graph TD
-    subgraph "Hash Join (안정적인 일괄 처리)"
-        U["users (ACTIVE 필터)"] --> H["Hash Table 생성"]
-        C["cash (전체 스캔)"] --> S["Clustered Index Scan"]
-        S --> H
-        H --> R["결과 반환"]
+    subgraph "안정적인 조인 (기존 인덱스 활용)"
+        U["users (ACTIVE 필터)"] --> NL["Nested Loop"]
+        NL --> C["cash (IX_CASH_REGDATE Seek)"]
+        C --> R["결과 반환"]
         
-        note1["인덱스가 없어 cash 테이블을 한 번 훑으며(Scan)<br/>reg_datetime 조건을 필터링하고 해시 테이블과 대조함<br/>순차 I/O 방식으로 예측 가능한 성능 유지"]
+        note1["기존 reg_date 인덱스를 통해<br/>불필요한 데이터 접근 없이<br/>정확한 날짜의 데이터만 효율적으로 조회"]
     end
-    
-    style S fill:#ddd,stroke:#333
 ```
 
-##### **2단계: 인덱스 생성 직후 (Nested Loop Join + Key Lookup 폭발)**
-신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 이 인덱스를 통해 '데이터 범위를 매우 좁게 필터링할 수 있다'고 **오판**합니다. 이에 따라 대량 처리용 Hash Join을 버리고 건별 처리용 **Nested Loop Join**으로 전략을 변경하며 재앙이 시작됩니다.
+##### **2단계: 인덱스 생성 직후 (신규 reg_datetime 인덱스로의 잘못된 전환)**
+신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 기존의 `reg_date` 인덱스보다 이 인덱스가 '더 얇고 가볍다'고 오판하여 실행 계획을 신규 인덱스 기반으로 갈아치웁니다.
 ```mermaid
 graph TD
-    subgraph "Nested Loop Join (재앙의 시작: 반복의 함정)"
+    subgraph "장애 발생 (신규 인덱스로의 잘못된 선택)"
         U_Outer["users (Outer 테이블)"] -- "1. ACTIVE 필터 후 Loop" --> C_Inner["cash (Inner 테이블)"]
         
-        C_Inner -- "2. 신규 reg_datetime 인덱스 Seek" --> N["IX_CASH_REGDT Seek"]
+        C_Inner -- "2. 더 얇은 신규 인덱스 선택" --> N["IX_CASH_REGDT Scan/Seek 시도"]
         N -- "3. SELECT c.* 추출을 위해" --> K["Key Lookup 폭발 (Random I/O)"]
-        K --> C_L["Clustered Index 접근 (cashno)"]
+        K --> C_L["Clustered Index 접근"]
         
-        note2["<b>문제의 핵심: 정교한 통계의 역설</b><br/>0.5%라는 낮은 히스토그램 수치에 속아<br/>수만 번의 반복적인 B-Tree 탐색과<br/>랜덤 I/O를 유발하는 실행 계획 선택"]
+        note2["<b>문제의 핵심: 인덱스 역전 현상</b><br/>기존 인덱스 대신 새 인덱스를 타면서<br/>reg_date 필터링 효과는 사라지고<br/>대량의 Key Lookup만 남게 됨"]
     end
 
     style K fill:#f96,stroke:#333,stroke-width:2px
@@ -83,20 +84,16 @@ graph TD
 
 #### 🧐 왜 Optimizer는 `reg_datetime` 인덱스를 선택했는가? (실행 계획 변동 사유)
 
-1.  **신규 인덱스로 인해 정교해진 히스토그램(Histogram)**:
-    *   인덱스 생성 전에는 `reg_datetime`의 상세 분포를 몰라 안전하게 전체 스캔을 수행했습니다.
-    *   인덱스 생성 직후 **매우 정교한 히스토그램**이 생성되었고, Optimizer는 "조회 기간 데이터가 전체의 0.5%뿐이네? 인덱스를 타면 매우 빠르겠군!"이라고 **오판**했습니다.
+1.  **Non-Clustered Index의 "가벼움"에 의한 비용 오판**:
+    *   `reg_date` 인덱스보다 새로 만든 `reg_datetime` 인덱스의 페이지 수가 더 적거나 '얇게' 보였을 수 있습니다.
+    *   Optimizer는 단순히 "페이지 수가 적으니 이 인덱스가 더 싸다"라고 판단하여 기존의 안정적인 경로를 버리고 신규 경로를 선택했습니다.
 
-2.  **Non-Clustered Index는 "더 가볍다"는 비용 착시**:
-    *   `IX_CASH_REGDT` 인덱스 페이지는 데이터 페이지보다 훨씬 '얇고 가볍기' 때문에, Optimizer는 이를 읽는 비용이 매우 저렴하다고 계산했습니다.
-    *   하지만 그 뒤에 따라오는 **수만 번의 Key Lookup(Random I/O) 누적 비용**이 전체 테이블을 순차적으로 훑는 비용보다 훨씬 비싸지는 지점(Tipping Point)을 간과했습니다.
+2.  **통계(Statistics) 생성과 실행 계획 역전**:
+    *   신규 인덱스 생성 시 수반된 **통계 정보 갱신** 과정에서, `reg_date`를 통한 필터링보다 `reg_datetime` 인덱스를 활용한 조인 비용이 더 낮게 추정되는 역전 현상이 발생했습니다.
 
-3.  **조인 방식의 변화 (Hash → Nested Loop)**:
-    *   통계 정보가 갱신되면서, 특정 데이터 범위를 인덱스로 콕 집어낼 수 있다고 판단한 Optimizer가 대량 처리에 유리한 **Hash Join** 대신 건건이 탐색하는 **Nested Loop Join**을 선택하게 되었습니다.
-
-3.  **`SELECT c.*`가 결정적 폭탄**:
-    *   `IX_CASH_REGDT`에는 `c.*`에 해당하는 나머지 컬럼들이 없습니다.
-    *   따라서 조인된 모든 행(예: 50만 건)에 대해 테이블 본체를 다시 뒤지는 **50만 번의 Key Lookup(Random I/O)**이 발생하며 CPU와 디스크 I/O가 폭발했습니다.
+3.  **결과적으로 대량의 Key Lookup 유발 (`SELECT c.*`의 치명타)**:
+    *   신규 인덱스는 기존 인덱스(`reg_date`)에 비해 해당 쿼리의 필터링 조건에 최적화되어 있지 않았음에도 불구하고, Optimizer의 비용 오판으로 인해 선택되었습니다.
+    *   `IX_CASH_REGDT`에는 `c.*`에 해당하는 나머지 컬럼들이 없습니다. 따라서 조인된 모든 행(예: 50만 건)에 대해 테이블 본체를 다시 뒤지는 **50만 번의 Key Lookup(Random I/O)**이 발생하며 CPU와 디스크 I/O가 폭발했습니다.
 
 ---
 
