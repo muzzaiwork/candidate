@@ -39,38 +39,45 @@ CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 ### 🔍 원인 분석 (Root Cause)
 
 #### 📊 Optimizer 실행 계획 변동 (3단계 흐름)
+
+##### **1단계: 인덱스 생성 전 (AS-IS)**
+적절한 인덱스가 없어 전체 테이블을 훑는 방식을 선택합니다.
 ```mermaid
 graph TD
-    subgraph "1단계: 인덱스 생성 전 (AS-IS)"
-        A1[SELECT 쿼리 시작] --> B1{Optimizer의 선택}
-        B1 -->|효율적 인덱스 없음| C1["PK_CASH (Clustered Index) Scan"]
-        C1 --> D1[순차적 데이터 읽기 - Sequential I/O]
-        D1 --> E1[결과 반환 - 다소 느리지만 안정적임]
-        
-        style C1 fill:#ddd,stroke:#333
-    end
+    A1[SELECT 쿼리 시작] --> B1{Optimizer의 선택}
+    B1 -->|효율적 인덱스 없음| C1["PK_CASH (Clustered Index) Scan"]
+    C1 --> D1[순차적 데이터 읽기 - Sequential I/O]
+    D1 --> E1[결과 반환 - 다소 느리지만 안정적임]
+    
+    style C1 fill:#ddd,stroke:#333
+```
 
-    subgraph "2단계: 인덱스 생성 직후 (ISSUE)"
-        A2[SELECT 쿼리 시작] --> B2{Optimizer의 선택}
-        B2 -->|0.5% 히스토그램 확인| C2[IX_CASH_REGDT 인덱스 스캔/검색]
-        C2 --> D2[찾은 각 행마다 RID/PK 추출]
-        D2 --> E2["PK_CASH (Clustered Index) 접근"]
-        E2 --> F2[실제 데이터 페이지 로드 - Key Lookup]
-        F2 --> G2[결과 반환 - 성능 급격히 저하]
-        
-        style E2 fill:#f96,stroke:#333,stroke-width:2px
-        style F2 fill:#f96,stroke:#333,stroke-width:2px
-    end
+##### **2단계: 인덱스 생성 직후 (ISSUE)**
+신규 인덱스의 히스토그램 정보를 바탕으로 잘못된 선택을 하여 Key Lookup이 발생합니다.
+```mermaid
+graph TD
+    A2[SELECT 쿼리 시작] --> B2{Optimizer의 선택}
+    B2 -->|0.5% 히스토그램 확인| C2[IX_CASH_REGDT 인덱스 스캔/검색]
+    C2 --> D2[찾은 각 행마다 RID/PK 추출]
+    D2 --> E2["PK_CASH (Clustered Index) 접근"]
+    E2 --> F2[실제 데이터 페이지 로드 - Key Lookup]
+    F2 --> G2[결과 반환 - 성능 급격히 저하]
+    
+    style E2 fill:#f96,stroke:#333,stroke-width:2px
+    style F2 fill:#f96,stroke:#333,stroke-width:2px
+```
 
-    subgraph "3단계: 커버링 인덱스 도입 (TO-BE)"
-        A3[SELECT 쿼리 시작] --> B3{Optimizer의 선택}
-        B3 -->|최적 경로 판단| C3[IX_CASH_REGDT_COVERING 인덱스 스캔]
-        C3 --> D3[인덱스 내 INCLUDE된 데이터 즉시 추출]
-        D3 --> E3[결과 반환 - 성능 최적화 완료]
-        
-        style C3 fill:#6cf,stroke:#333,stroke-width:2px
-        style D3 fill:#6cf,stroke:#333,stroke-width:2px
-    end
+##### **3단계: 커버링 인덱스 도입 (TO-BE)**
+인덱스만으로 조회가 가능해져 최적의 성능을 냅니다.
+```mermaid
+graph TD
+    A3[SELECT 쿼리 시작] --> B3{Optimizer의 선택}
+    B3 -->|최적 경로 판단| C3[IX_CASH_REGDT_COVERING 인덱스 스캔]
+    C3 --> D3[인덱스 내 INCLUDE된 데이터 즉시 추출]
+    D3 --> E3[결과 반환 - 성능 최적화 완료]
+    
+    style C3 fill:#6cf,stroke:#333,stroke-width:2px
+    style D3 fill:#6cf,stroke:#333,stroke-width:2px
 ```
 
 #### 1. Optimizer의 실행 계획 변동 (Execution Plan Change)
