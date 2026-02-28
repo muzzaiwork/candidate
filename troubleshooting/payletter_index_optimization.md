@@ -167,6 +167,58 @@ graph LR
 #### 3. 주기적인 인덱스 관리 및 통계 갱신
 - 파편화된 인덱스를 다시 정렬하는 **Rebuild** 작업을 자동화하고, DB가 똑똑한 판단을 내릴 수 있도록 **통계 정보**를 최신으로 유지했습니다.
 
+#### 📊 인덱스 Rebuild 과정 (B-Tree 재구성)
+인덱스 Rebuild는 파편화된 리프 페이지들을 물리적으로 연속된 공간에 다시 배치하고, 빈 공간을 정리하여 트리의 높이를 최적화하는 작업입니다.
+
+```mermaid
+graph TD
+    subgraph "BEFORE: 파편화된 상태 (Fragmentation)"
+        Root1["루트 노드"]
+        B1["브랜치 A"]
+        B2["브랜치 B"]
+        L1["리프 1"]
+        L2["리프 2 (멀리 떨어짐)"]
+        L3["리프 3 (중간 비어있음)"]
+        
+        Root1 --> B1
+        Root1 --> B2
+        B1 --> L1
+        B1 -. "Page Split으로 분리" .-> L2
+        B2 --> L3
+        
+        style L2 fill:#f99,stroke:#333
+        style L3 fill:#f99,stroke:#333
+    end
+
+    subgraph "AFTER: Rebuild 후 (Defragmented)"
+        Root2["루트 노드"]
+        B3["브랜치 A"]
+        B4["브랜치 B"]
+        L4["리프 1"]
+        L5["리프 2"]
+        L6["리프 3"]
+        
+        Root2 --> B3
+        Root2 --> B4
+        B3 --> L4
+        B3 --> L5
+        B4 --> L6
+        
+        L4 --- L5 --- L6
+        linkStyle 9,10 stroke:#6cf,stroke-width:2px,stroke-dasharray: 0
+        
+        style L4 fill:#6cf,stroke:#333
+        style L5 fill:#6cf,stroke:#333
+        style L6 fill:#6cf,stroke:#333
+    end
+```
+
+**Rebuild의 핵심 동작:**
+1.  **새 인덱스 생성**: 기존 인덱스를 바탕으로 물리적으로 연속된 새 페이지들에 데이터를 정렬하여 기록합니다.
+2.  **밀도 최적화(Fill Factor)**: 페이지 내에 데이터를 빽빽하게 채워 페이지 수를 줄이고 I/O 효율을 높입니다.
+3.  **포인터 재연결**: 리프 페이지 간의 논리적 순서(Forward/Backward Scan용)와 물리적 위치를 일치시킵니다.
+4.  **교체**: 작업이 완료되면 기존의 누더기 같은 인덱스를 삭제하고 새 인덱스로 교체합니다.
+
 ### ✨ 성과 및 결과 (Result)
 - **조회 성능 회복 및 최적화**: 커버링 인덱스 적용 후 쿼리 응답 속도가 인덱스 생성 전 대비 약 5배 이상 향상됨.
 - **시스템 안정성 확보**: 급격한 I/O 부하 문제를 해결하여 피크 타임 시 빌링 시스템의 안정적인 서비스 가능.
