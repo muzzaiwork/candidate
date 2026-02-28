@@ -59,22 +59,28 @@ graph TD
 ```
 
 ##### **2단계: 인덱스 생성 직후 (Nested Loop Join으로 오판)**
-신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 이 인덱스가 '데이터를 매우 좁게 필터링할 수 있는 좋은 수단'이라고 **착각**합니다. 이로 인해 조인 방식이 **Nested Loop Join**으로 변경되며 재앙이 시작됩니다.
+신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 이 인덱스를 통해 데이터를 매우 빠르게 찾을 수 있다고 **오판**합니다. 이로 인해 대량 처리용 Hash Join을 버리고 건별 처리용 **Nested Loop Join**으로 전략을 변경하면서 I/O 재앙이 시작됩니다.
+
 ```mermaid
 graph TD
-    subgraph "Nested Loop Join (재앙의 시작)"
-        U_Outer["users (Outer Loop)"] --> C_Inner["cash (Inner Loop)"]
+    subgraph "Nested Loop Join (재앙의 시작: 반복의 함정)"
+        U_Outer["users (Outer 테이블)"] -- "1. 행 하나 읽을 때마다 (Loop)" --> C_Inner["cash (Inner 테이블)"]
         
-        C_Inner --> N["IX_CASH_REGDT (신규 인덱스) Seek/Scan 시도"]
-        N --> K["Key Lookup 발생 (Random I/O)"]
+        C_Inner -- "2. 신규 인덱스 탐색" --> N["IX_CASH_REGDT Seek/Scan"]
+        N -- "3. 행당 1회씩 발생" --> K["Key Lookup (Random I/O)"]
         K --> C_L["Clustered Index 접근"]
         
-        note2["외벽(users)의 행 하나마다 내벽(cash)의 신규 인덱스를<br/>뒤지는 과정에서 수십만 번의 Key Lookup과<br/>디스크 Random I/O가 발생하며 성능이 폭락함"]
+        note2["<b>문제의 핵심: 반복 횟수</b><br/>users 테이블이 1,000행이라면<br/>IX_CASH_REGDT 탐색 1,000번 +<br/>Key Lookup 1,000번이 강제됨"]
     end
 
     style K fill:#f96,stroke:#333,stroke-width:2px
     style C_L fill:#f96,stroke:#333,stroke-width:2px
 ```
+
+**왜 재앙이 될까요? (비유)**
+- **Hash Join (1단계)**: 전교생 명부와 주소록을 각각 한 번씩 처음부터 끝까지 읽어서 짝을 맞추는 방식입니다. (시간은 좀 걸려도 한 번만 읽으면 끝!)
+- **Nested Loop Join (2단계)**: 전교생 한 명 한 명을 호명할 때마다, 매번 주소록(인덱스)을 펼쳐서 해당 학생의 주소를 찾고(Seek), 다시 그 주소의 실제 집(Key Lookup)까지 매번 다녀오는 방식입니다.
+- **결과**: 학생이 10명뿐이면 빠르겠지만, 학생이 수만 명이라면 주소록을 수만 번 펼치고 집을 수만 번 방문하는 과정에서 선생님(CPU)과 메신저(Disk I/O)가 과부하로 쓰러지게 됩니다.
 
 ##### **3단계: 커버링 인덱스 도입 (TO-BE)**
 인덱스 리프 노드에 필요한 데이터가 모두 포함되어 있어, 테이블 본체 접근 없이 최단 경로로 조회가 완료됩니다. (Optimized I/O)
