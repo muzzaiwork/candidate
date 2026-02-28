@@ -21,76 +21,59 @@ CREATE TABLE cash (
 ```
 
 #### 2. 성능 최적화 시도 (인덱스 추가)
-특정 기간의 결제 내역 조회가 빈번해짐에 따라, `reg_datetime` 컬럼의 조회 성능을 향상시키기 위해 **비클러스터형 인덱스(Non-Clustered Index)**를 신규 생성했습니다.
+특정 배치 작업이나 통계 조회를 위해 `reg_datetime` 컬럼의 성능을 향상시키고자 **비클러스터형 인덱스(Non-Clustered Index)**를 신규 생성했습니다.
 
 ```sql
--- [문제가 된 조회 쿼리 예시]
--- reg_datetime 조건뿐만 아니라, 다른 조건과 결합된 쿼리에서도 문제가 발생했습니다.
-SELECT * 
-FROM cash 
-WHERE userid = 'USER_A' 
-  AND reg_datetime BETWEEN '2021-05-01' AND '2021-05-31';
+-- [문제가 된 조회 쿼리 예시 (JOIN 포함, reg_datetime 조건 없음)]
+-- reg_datetime 조건이 전혀 없는 쿼리였음에도 성능이 급격히 저하되었습니다.
+SELECT c.*, u.username
+FROM cash c
+JOIN users u ON c.userid = u.userid
+WHERE u.status = 'ACTIVE'; -- reg_datetime 조건은 어디에도 없음
 
 -- [조회 성능 개선을 위해 신규 인덱스 생성]
 CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 ```
 
-#### 3. 예기치 못한 성능 저하 발생
-인덱스 생성 직후, 기존에 잘 동작하던 조회 쿼리들의 성능이 갑자기 급격히 저하되었습니다. 쿼리문은 동일했으나, DB의 **Optimizer(CBO)**가 예상과 다른 실행 계획을 선택하면서 시스템 전반의 응답 속도가 느려지는 이슈가 발생했습니다.
+#### 3. 예기치 못한 성능 저하 발생 (조인 쿼리 성능 폭락)
+인덱스 생성 직후, 기존에 잘 동작하던 **조인(JOIN) 기반 쿼리**들의 성능이 갑자기 급격히 저하되었습니다. `WHERE` 조건에 신규 인덱스 컬럼이 없음에도 불구하고, DB의 **Optimizer(CBO)**가 실행 계획의 **조인 방식(Join Strategy)**을 변경하면서 시스템 전반의 응답 속도가 느려지는 이슈가 발생했습니다.
 
 ### 🔍 원인 분석 (Root Cause)
 
-#### 📊 Optimizer 실행 계획 변동 (3단계 흐름)
+#### 📊 Optimizer 실행 계획 변동 (조인 전략의 변화)
 
-##### **1단계: 인덱스 생성 전 (AS-IS)**
-적절한 인덱스가 없어 전체 테이블을 순차적으로 훑거나(`Clustered Index Scan`), 혹은 `userid` 조건이 있더라도 인덱스가 없어 전체 스캔을 수행하던 안정적인 상태입니다.
+##### **1단계: 인덱스 생성 전 (Hash Join)**
+`cash` 테이블과 `users` 테이블을 조인할 때, 대량의 데이터를 효율적으로 처리하기 위해 **Hash Join**을 사용하던 안정적인 상태입니다.
 ```mermaid
 graph TD
-    subgraph "Clustered Index (Table Body)"
-        Root1["Root"] --> B1["Branch"]
-        B1 --> L1["Leaf A"]
-        B1 --> L2["Leaf B"]
-        B1 --> L3["Leaf C"]
-        B1 --> L4["Leaf D"]
+    subgraph "Hash Join (안정적인 일괄 처리)"
+        U["users (Build Input)"] --> H["Hash Table 생성"]
+        C["cash (Probe Input)"] --> S["Full Table Scan"]
+        S --> H
+        H --> R["결과 반환"]
         
-        L1 ===> L2 ===> L3 ===> L4
-        note1["데이터 페이지를 순차적으로 연결된<br/>포인터를 따라 차례대로 읽으며<br/>userid와 reg_datetime 조건을 모두 체크함"]
+        note1["cash 테이블을 순차적으로 한 번만 훑으며(Scan)<br/>해시 테이블과 대조하므로 예측 가능한 성능 유지"]
     end
     
-    style L1 fill:#ddd,stroke:#333
-    style L2 fill:#ddd,stroke:#333
-    style L3 fill:#ddd,stroke:#333
-    style L4 fill:#ddd,stroke:#333
-    linkStyle 4,5,6 stroke:#666,stroke-width:4px
+    style S fill:#ddd,stroke:#333
 ```
 
-##### **2단계: 인덱스 생성 직후 (ISSUE)**
-신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 `userid` 조건으로 전체를 훑는 것보다 `reg_datetime` 인덱스로 범위를 좁히는 것이 더 효율적이라고 **오판**합니다.
+##### **2단계: 인덱스 생성 직후 (Nested Loop Join으로 오판)**
+신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 이 인덱스가 '데이터를 매우 좁게 필터링할 수 있는 좋은 수단'이라고 **착각**합니다. 이로 인해 조인 방식이 **Nested Loop Join**으로 변경되며 재앙이 시작됩니다.
 ```mermaid
 graph TD
-    subgraph "Non-Clustered Index (reg_datetime)"
-        N_Root["Root"] --> N_L1["Leaf (May 1st)"]
-        N_Root --> N_L2["Leaf (May 31st)"]
+    subgraph "Nested Loop Join (재앙의 시작)"
+        U_Outer["users (Outer Loop)"] --> C_Inner["cash (Inner Loop)"]
+        
+        C_Inner --> N["IX_CASH_REGDT (신규 인덱스) Seek/Scan 시도"]
+        N --> K["Key Lookup 발생 (Random I/O)"]
+        K --> C_L["Clustered Index 접근"]
+        
+        note2["외벽(users)의 행 하나마다 내벽(cash)의 신규 인덱스를<br/>뒤지는 과정에서 수십만 번의 Key Lookup과<br/>디스크 Random I/O가 발생하며 성능이 폭락함"]
     end
 
-    subgraph "Clustered Index (Data Body)"
-        C_Root["Root"] --> C_B1["Branch"]
-        C_B1 --> C_L1["Leaf (Data 1)"]
-        C_B1 --> C_L2["Leaf (Data 2)"]
-        C_B1 --> C_L3["Leaf (Data 3)"]
-        C_B1 --> C_L4["Leaf (Data 4)"]
-    end
-
-    N_L1 -. "1. Key Lookup 후 userid 체크" .-> C_L3
-    N_L1 -. "2. Key Lookup 후 userid 체크" .-> C_L1
-    N_L2 -. "3. Key Lookup 후 userid 체크" .-> C_L4
-    
-    note2["Optimizer는 reg_datetime으로 필터링하는 것이<br/>더 빠르다고 판단했으나, 실제로는 수만 건의<br/>Key Lookup 후 userid를 일일이 대조하는<br/>과정에서 I/O 부하가 폭증함"]
-
-    style C_L1 fill:#f96,stroke:#333
-    style C_L3 fill:#f96,stroke:#333
-    style C_L4 fill:#f96,stroke:#333
-    linkStyle 4,5,6 stroke:#f66,stroke-width:2px,stroke-dasharray: 5
+    style K fill:#f96,stroke:#333,stroke-width:2px
+    style C_L fill:#f96,stroke:#333,stroke-width:2px
 ```
 
 ##### **3단계: 커버링 인덱스 도입 (TO-BE)**
