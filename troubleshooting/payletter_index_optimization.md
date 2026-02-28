@@ -108,26 +108,42 @@ graph TD
 - **결과**: 인덱스를 읽을 때 디스크 헤드가 물리적으로 멀리 떨어진 곳을 왔다 갔다 해야 하므로(**Random I/O**), 조회 속도가 급격히 느려집니다.
 
 #### 📊 인덱스 파편화 및 페이지 분할 과정
+인덱스 리프 페이지가 꽉 찬 상태에서 새로운 데이터가 삽입될 때, 기존 페이지를 두 개로 나누어 공간을 확보하는 **페이지 분할(Page Split)**이 발생합니다. 이 과정에서 새로 생성된 페이지는 물리적으로 기존 페이지와 멀리 떨어질 수 있으며, 이것이 **파편화**의 주원인이 됩니다.
+
 ```mermaid
 graph TD
-    subgraph "1. 정상 상태 (연속된 저장 공간)"
-        P1[페이지 A: 1, 2, 4, 5]
+    %% Root Node
+    Root["루트 노드 (Root)"]
+    
+    subgraph "1단계: 페이지 가득 참 (Full Page)"
+        Leaf_Full["리프 페이지 A (연속된 공간): [1, 2, 4, 5]"]
     end
 
-    subgraph "2. 데이터 삽입 (3 삽입 시도)"
-        P1 --> PS{공간 부족!}
+    subgraph "2단계: 데이터 '3' 삽입 시도 및 분할"
+        Split_Point{페이지 분할 발생!}
+        Leaf_A_New["리프 페이지 A (기존): [1, 2]"]
+        Leaf_B_New["리프 페이지 B (신규): [3, 4, 5]"]
     end
 
-    subgraph "3. 페이지 분할 (Page Split)"
-        PS --> P1_NEW[페이지 A: 1, 2]
-        PS --> P2_NEW[페이지 B: 3, 4, 5]
-        P1_NEW -. "물리적으로 멀리 떨어진 위치" .-> P2_NEW
+    subgraph "3단계: 최종 트리 구조 (파편화 발생)"
+        Root_Final["루트 노드"]
+        Leaf_A_Final["리프 페이지 A: [1, 2]"]
+        Leaf_B_Final["리프 페이지 B: [3, 4, 5]"]
+        
+        Root_Final --> Leaf_A_Final
+        Root_Final --> Leaf_B_Final
+        
+        Leaf_A_Final -. "물리적으로 멀리 떨어진 위치 (Random I/O)" .-> Leaf_B_Final
     end
 
-    subgraph "4. 결과 (성능 저하)"
-        P2_NEW --> F[논리적 순서와 물리적 위치 불일치]
-        F --> G[디스크 헤더의 이동 증가 - Random I/O]
-    end
+    %% Flow
+    Leaf_Full --> Split_Point
+    Split_Point --> Leaf_A_New
+    Split_Point --> Leaf_B_New
+    Leaf_B_New --> Root_Final
+    
+    style Split_Point fill:#f96,stroke:#333,stroke-width:2px
+    style Leaf_B_Final fill:#f99,stroke:#333
 ```
 
 #### 3. 통계 정보의 불일치
