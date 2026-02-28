@@ -33,6 +33,32 @@ CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 
 ### 🔍 원인 분석 (Root Cause)
 
+#### 📊 Optimizer 실행 계획 (AS-IS vs TO-BE)
+```mermaid
+graph TD
+    subgraph "❌ AS-IS: 비효율적인 실행 계획 (Key Lookup)"
+        A1[SELECT 쿼리 시작] --> B1{Optimizer의 선택}
+        B1 -->|비용 오판| C1[IX_CASH_REGDT 인덱스 스캔]
+        C1 --> D1[찾은 각 행마다 RID/PK 추출]
+        D1 --> E1["PK_CASH (Clustered Index) 접근"]
+        E1 --> F1[실제 데이터 페이지 로드 - Key Lookup]
+        F1 --> G1[결과 반환]
+        
+        style E1 fill:#f96,stroke:#333,stroke-width:2px
+        style F1 fill:#f96,stroke:#333,stroke-width:2px
+    end
+
+    subgraph "✅ TO-BE: 효율적인 실행 계획 (Covering Index)"
+        A2[SELECT 쿼리 시작] --> B2{Optimizer의 선택}
+        B2 -->|최적 경로| C2[IX_CASH_REGDT_COVERING 인덱스 스캔]
+        C2 --> D2[인덱스 내 INCLUDE된 데이터 즉시 추출]
+        D2 --> E2[결과 반환]
+        
+        style C2 fill:#6cf,stroke:#333,stroke-width:2px
+        style D2 fill:#6cf,stroke:#333,stroke-width:2px
+    end
+```
+
 #### 1. Optimizer의 실행 계획 변동 (Execution Plan Change)
 - **핵심 원인**: "인덱스를 추가했을 뿐인데 왜 느려졌는가?"에 대한 근본적인 이유입니다.
 - **현상**: 새로운 인덱스가 생성되면 DB의 Optimizer는 이를 활용할 수 있는 새로운 경로를 계산합니다. 이때 **통계 정보(Statistics)**가 최신화되지 않았거나, Optimizer가 인덱스 스캔 후 발생하는 **Key Lookup 비용**을 과소평가하여 잘못된 실행 계획을 수립할 수 있습니다.
