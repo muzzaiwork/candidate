@@ -25,9 +25,11 @@ CREATE TABLE cash (
 
 ```sql
 -- [문제가 된 조회 쿼리 예시]
+-- reg_datetime 조건뿐만 아니라, 다른 조건과 결합된 쿼리에서도 문제가 발생했습니다.
 SELECT * 
 FROM cash 
-WHERE reg_datetime BETWEEN '2021-05-01' AND '2021-05-31';
+WHERE userid = 'USER_A' 
+  AND reg_datetime BETWEEN '2021-05-01' AND '2021-05-31';
 
 -- [조회 성능 개선을 위해 신규 인덱스 생성]
 CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
@@ -41,7 +43,7 @@ CREATE INDEX IX_CASH_REGDT ON cash(reg_datetime);
 #### 📊 Optimizer 실행 계획 변동 (3단계 흐름)
 
 ##### **1단계: 인덱스 생성 전 (AS-IS)**
-적절한 인덱스가 없어 전체 테이블을 순차적으로 훑는 방식을 선택합니다. (Sequential I/O)
+적절한 인덱스가 없어 전체 테이블을 순차적으로 훑거나(`Clustered Index Scan`), 혹은 `userid` 조건이 있더라도 인덱스가 없어 전체 스캔을 수행하던 안정적인 상태입니다.
 ```mermaid
 graph TD
     subgraph "Clustered Index (Table Body)"
@@ -52,7 +54,7 @@ graph TD
         B1 --> L4["Leaf D"]
         
         L1 ===> L2 ===> L3 ===> L4
-        note1["데이터 페이지를 순차적으로 연결된<br/>포인터를 따라 차례대로 읽음"]
+        note1["데이터 페이지를 순차적으로 연결된<br/>포인터를 따라 차례대로 읽으며<br/>userid와 reg_datetime 조건을 모두 체크함"]
     end
     
     style L1 fill:#ddd,stroke:#333
@@ -63,7 +65,7 @@ graph TD
 ```
 
 ##### **2단계: 인덱스 생성 직후 (ISSUE)**
-신규 인덱스 탐색 후, 실제 데이터를 찾기 위해 테이블 본체를 불규칙하게 뒤지는 과정에서 I/O가 폭증합니다. (Random I/O)
+신규 인덱스(`reg_datetime`)가 추가되자, Optimizer는 `userid` 조건으로 전체를 훑는 것보다 `reg_datetime` 인덱스로 범위를 좁히는 것이 더 효율적이라고 **오판**합니다.
 ```mermaid
 graph TD
     subgraph "Non-Clustered Index (reg_datetime)"
@@ -79,11 +81,11 @@ graph TD
         C_B1 --> C_L4["Leaf (Data 4)"]
     end
 
-    N_L1 -. "1. Key Lookup" .-> C_L3
-    N_L1 -. "2. Key Lookup" .-> C_L1
-    N_L2 -. "3. Key Lookup" .-> C_L4
+    N_L1 -. "1. Key Lookup 후 userid 체크" .-> C_L3
+    N_L1 -. "2. Key Lookup 후 userid 체크" .-> C_L1
+    N_L2 -. "3. Key Lookup 후 userid 체크" .-> C_L4
     
-    note2["인덱스에서 찾은 위치마다<br/>테이블 본체의 무작위 지점을 다시 방문함<br/>(Disk I/O 폭증의 주범)"]
+    note2["Optimizer는 reg_datetime으로 필터링하는 것이<br/>더 빠르다고 판단했으나, 실제로는 수만 건의<br/>Key Lookup 후 userid를 일일이 대조하는<br/>과정에서 I/O 부하가 폭증함"]
 
     style C_L1 fill:#f96,stroke:#333
     style C_L3 fill:#f96,stroke:#333
