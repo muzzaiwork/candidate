@@ -1,49 +1,47 @@
-# [에잇퍼센트/페이레터] 낙관적 락(Optimistic Lock)을 이용한 결제 동시성 제어
+# [에잇퍼센트/페이레터] 비관적 락(Pessimistic Lock)을 이용한 결제 동시성 제어
 
 ### 🏢 소속 / 기간
 - **회사**: ㈜에잇퍼센트, 페이레터㈜
 - **관련 도메인**: 코어뱅킹(계좌 잔액), 빌링(캐시 잔액)
 
 ### ❓ 문제 상황 (Challenge)
-- **동시성 이슈**: 대규모 트래픽이 발생하는 결제/출금 시스템에서 동일한 계정(Account)에 대해 거의 동시에 여러 건의 차감 요청이 들어올 경우, 데이터 정합성이 깨질 위험이 있음.
+- **동시성 이슈**: 결제/출금 시스템에서 동일한 계정(Account)에 대해 거의 동시에 여러 건의 차감 요청이 들어올 경우, 데이터 정합성이 깨질 위험이 있음.
 - **Race Condition**: 두 트랜잭션이 동시에 잔액을 읽고 수정할 때, 나중에 커밋된 데이터가 먼저 커밋된 데이터를 덮어쓰는 **Lost Update** 현상이 발생하여 마이너스 잔액이 되거나 데이터가 누락될 수 있음.
 
 ### 🛠 해결 방안 (Action)
-- **낙관적 락(Optimistic Lock) 도입**: DB 수준의 물리적인 락(Pessimistic Lock) 대신, 어플리케이션 수준에서 버전 정보를 관리하여 충돌을 감지하는 낙관적 락을 적용.
-- **낙관적 락 vs 비관적 락 비교 및 채택 이유**:
-    - **비관적 락(Pessimistic Lock)**: `SELECT ... FOR UPDATE` 등을 사용하여 DB 수준에서 데이터 점유. 충돌이 잦은 경우 유리하지만, 락 대기 시간으로 인해 성능(Throughput)이 저하될 수 있음.
-    - **낙관적 락(Optimistic Lock)**: 버전 정보를 활용해 충돌을 감지. 데이터 수정 시점에만 확인하므로 DB 부하가 적고 시스템 가용성이 높음.
-    - **채택 이유**: 결제 시스템 특성상 동일 계정에 대한 동시 요청 빈도가 아주 높지는 않으나(Low Contention), 발생 시 정합성은 반드시 보장해야 함. 비관적 락으로 인한 불필요한 DB 커넥션 점유와 대기 시간을 최소화하고, 높은 처리량(Throughput)을 유지하기 위해 낙관적 락과 재시도 로직을 선택.
-- **JPA @Version 활용**: 엔티티에 버전 컬럼을 추가하여 수정 시점에 버전 일치 여부를 체크하도록 구현.
-- **재시도 로직(Retry Mechanism)**: 버전 충돌(`ObjectOptimisticLockingFailureException`) 발생 시, 최신 데이터를 다시 조회하여 잔액을 확인하고 결제를 재시도하도록 설계.
+- **비관적 락(Pessimistic Lock) 도입**: DB 수준에서 `SELECT ... FOR UPDATE`를 사용하여 특정 레코드에 대한 점유권을 명시적으로 획득하는 비관적 락을 적용.
+- **비관적 락 채택 이유**:
+    - **락 충돌 저빈도**: 시스템 특성상 특정 계정에 대해 아주 빈번하게 동시 요청이 발생할 확률이 낮음(Low Contention).
+    - **짧은 대기 시간**: 락이 걸리더라도 각 트랜잭션의 처리 시간이 짧아 후속 트랜잭션의 대기 시간이 시스템 성능에 미치는 영향이 미미할 것으로 판단.
+    - **정합성 우선**: 금융 서비스의 특성상 동시성 제어 실패로 인한 데이터 꼬임 비용이 매우 크므로, 어플리케이션 계층의 복잡한 재시도 로직보다 DB 수준의 확실한 데이터 보호를 선택.
+- **Spring Data JPA @Lock 활용**: Repository 계층에서 `LockModeType.PESSIMISTIC_WRITE`를 설정하여 데이터 조회 시점에 배타적 락을 획득하도록 구현.
 
-#### 📊 낙관적 락 동작 및 재시도 흐름
+#### 📊 비관적 락 동작 흐름
 ```mermaid
 sequenceDiagram
-    participant Tx1 as 트랜잭션 1 (성공)
-    participant Tx2 as 트랜잭션 2 (재시도)
-    participant DB as 데이터베이스 (Version=7)
+    participant Tx1 as 트랜잭션 1 (선점)
+    participant Tx2 as 트랜잭션 2 (대기)
+    participant DB as 데이터베이스
 
-    Tx1->>DB: 잔액/버전 조회 (Balance: 1만, V: 7)
-    Tx2->>DB: 잔액/버전 조회 (Balance: 1만, V: 7)
+    Tx1->>DB: SELECT ... FOR UPDATE (Account ID: 101)
+    Note over DB: Account 101 레코드 락 획득
     
-    Tx1->>Tx1: 7,000원 차감 계산
-    Tx2->>Tx2: 7,000원 차감 계산
+    Tx2->>DB: SELECT ... FOR UPDATE (Account ID: 101)
+    Note right of Tx2: Tx1이 락을 해제할 때까지 대기 (Wait)
 
-    Tx1->>DB: UPDATE (V: 7 -> 8) - 커밋 성공
-    Note over DB: DB 상태: Balance: 3,000, V: 8
+    Tx1->>Tx1: 잔액 확인 및 차감 계산
+    Tx1->>DB: UPDATE (잔액 변경) 및 커밋
+    Note over DB: 락 해제
 
-    Tx2->>DB: UPDATE (WHERE V=7) - 충돌 발생!
-    Note right of Tx2: OptimisticLockException 발생
-
-    Tx2->>DB: [재시도] 최신 잔액/버전 조회 (B: 3,000, V: 8)
-    Tx2->>Tx2: 7,000원 차감 시도 -> 잔액 부족!
-    Tx2-->>Tx2: INSUFFICIENT_FUNDS 종료
+    Tx2->>DB: [대기 종료] 레코드 락 획득
+    Tx2->>Tx2: 최신 잔액 확인 및 차감 시도
+    Tx2->>DB: UPDATE 및 커밋
+    Note over DB: 락 해제
 ```
 
 ### 💻 코드 예시 (Java / Spring Data JPA)
 
-#### 1. Entity: @Version으로 낙관적 락 활성화
+#### 1. Entity
 ```java
 @Entity
 @Table(name = "account_balance")
@@ -52,9 +50,6 @@ public class AccountBalance {
     private Long accountId;
 
     private BigDecimal balance;
-
-    @Version
-    private Long version; // 수정 시마다 자동 증가 및 충돌 감지
 
     public void withdraw(BigDecimal amount) {
         if (balance.compareTo(amount) < 0) {
@@ -65,58 +60,40 @@ public class AccountBalance {
 }
 ```
 
-#### 2. Service: 충돌 시 재시도 로직 구현
+#### 2. Repository: 비관적 락 설정
+```java
+public interface AccountBalanceRepository extends JpaRepository<AccountBalance, Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from AccountBalance a where a.accountId = :accountId")
+    Optional<AccountBalance> findByIdWithLock(@Param("accountId") Long accountId);
+}
+```
+
+#### 3. Service: 트랜잭션 내 락 획득 및 처리
 ```java
 @Service
 public class PaymentService {
     private final AccountBalanceRepository repo;
 
-    public void pay(Long accountId, BigDecimal amount) {
-        int maxRetry = 5;
-        int attempt = 0;
-
-        while (true) {
-            attempt++;
-            try {
-                // 1. 성공 시: 비즈니스 로직이 무사히 수행되면 return으로 루프를 즉시 빠져나감
-                withdrawTx(accountId, amount);
-                return; 
-
-            } catch (ObjectOptimisticLockingFailureException e) {
-                // 2. 최대 재시도 횟수 초과 시: 예외를 던지며 루프 종료
-                if (attempt >= maxRetry) {
-                    throw new IllegalStateException("CONCURRENCY_RETRY_EXCEEDED", e);
-                }
-                
-                // 3. 충돌 시 잠시 대기 후 다시 시도 (Backoff)
-                // 바로 재시도하는 것보다 미세한 지연을 주는 것이 충돌 가능성을 낮춤
-                try {
-                    Thread.sleep(100); // 100ms 대기
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-                
-                // 다음 루프에서 findById를 통해 최신 버전의 데이터를 다시 조회함 (재조회 포함)
-            }
-            // 4. 기타 비즈니스 예외(예: 잔액 부족): catch되지 않고 그대로 호출자에게 전파되어 루프 종료
-        }
-    }
-
     @Transactional
-    public void withdrawTx(Long accountId, BigDecimal amount) {
-        AccountBalance ab = repo.findById(accountId)
+    public void pay(Long accountId, BigDecimal amount) {
+        // 1. SELECT ... FOR UPDATE 쿼리 실행 (DB 수준 락 획득)
+        AccountBalance ab = repo.findByIdWithLock(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("ACCOUNT_NOT_FOUND"));
+
+        // 2. 비즈니스 로직 수행 (잔액 차감)
         ab.withdraw(amount);
-        // 트랜잭션 종료 시점에 UPDATE 수행하며 버전 체크
+
+        // 3. 메서드 종료 시 트랜잭션 커밋과 함께 DB 락 해제
     }
 }
 ```
 
 ### 💡 실무 팁
-- **멱등성(Idempotency) 보장**: 낙관적 락은 동시 수정 충돌을 막는 용도이며, 동일한 요청이 두 번 들어오는 중복 요청은 `payment_request_id`와 같은 **Unique Key**를 활용하여 별도로 방어해야 함.
-- **락 범위 최소화**: 낙관적 락은 충돌이 적을 것으로 예상될 때 효율적이며, 충돌이 매우 빈번하다면 비관적 락(Pessimistic Lock)이 유리할 수 있음.
+- **타임아웃 설정**: 비관적 락 사용 시 무한정 대기를 방지하기 위해 `javax.persistence.lock.timeout` 힌트를 활용하여 적절한 타임아웃을 설정해야 함.
+- **데드락 주의**: 여러 테이블을 수정할 경우 락을 획득하는 순서를 일관되게 유지하여 데드락(Deadlock) 발생 가능성을 차단해야 함.
 
 ### ✨ 성과 및 결과 (Result)
-- **데이터 무결성 확보**: 동시 결제 상황에서도 잔액 꼬임이나 마이너스 잔액 발생을 원천 차단.
-- **시스템 가용성 유지**: DB 락으로 인한 대기(Wait) 시간을 줄여 전체적인 시스템 응답 속도 유지.
-- **금융 신뢰도 향상**: 자금 흐름에 대한 정확한 정합성을 보장하여 서비스 안정성 강화.
+- **완벽한 정합성 보장**: DB 수준의 강한 락을 통해 동시 요청 시에도 데이터 불일치 문제를 근본적으로 해결.
+- **구현 단순화**: 별도의 재시도 로직이나 버전 관리 없이 JPA 표준 어노테이션만으로 복잡한 동시성 제어를 안전하게 구현.
+- **안정적인 처리량**: 실제 운영 환경에서 락 대기로 인한 병목 현상 없이 안정적으로 결제 요청을 처리함.
