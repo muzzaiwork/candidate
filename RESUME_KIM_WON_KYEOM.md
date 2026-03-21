@@ -120,7 +120,7 @@
 *   **[블루월넛]** [레거시 프레임워크 버전 업 및 메모리 누수 최적화 (Jennifer, MAT)](troubleshooting/bluewalnut_memory_leak_optimization.md)
 *   **[에잇퍼센트]** [여신 시스템 ERD 구조 개선 (데이터 50% 절감)](troubleshooting/8percent_erd_optimization.md)
 *   **[에잇퍼센트]** [P2P 원리금 수취권 매매 시스템 및 유동성 개선](troubleshooting/8percent_right_trading_system.md)
-*   **[에잇퍼센트]** [Celery를 이용한 대규모 지급(이체) 처리 비동기 최적화](troubleshooting/8percent_async_transfer_celery.md)
+*   **[에잇퍼센트]** [Celery를 이용한 대규모 지급(이체) 비동기 처리](troubleshooting/8percent_async_transfer_celery.md)
 *   **[페이레터]** [대사 배치 및 이상 거래 탐지 시스템 구축](troubleshooting/payletter_chargeback_detection.md)
 *   **[페이레터/블루월넛]** [PG 웹훅 중복 호출 방지 및 멱등성 보장](troubleshooting/billing_webhook_concurrency_control.md)
 *   **[페이레터]** [빌링 테이블 인덱스 최적화 및 성능 저하 해결](troubleshooting/payletter_index_optimization.md)
