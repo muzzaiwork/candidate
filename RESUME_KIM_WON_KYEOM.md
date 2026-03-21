@@ -6,7 +6,7 @@
 
 ### 📋 핵심 역량
 *   **결제/금융 경험**: 코어뱅킹(P2P 여신), 빌링, 결제 플랫폼 등 무결성이 필수적인 금융 시스템 구축 및 운영.
-*   **동시성 제어 및 트랜잭션 정합성**: 낙관적 락(Optimistic Lock) 및 재시도 로직을 활용한 대규모 결제 시스템의 데이터 무결성 보장.
+*   **동시성 제어 및 트랜잭션 정합성**: 비관적 락(Pessimistic Lock)을 활용한 대규모 결제 시스템의 데이터 무결성 보장.
 *   **외부기관 연계**: 국내 및 해외(동남아, 일본, 중국, 유럽 등) 20여 개 이상의 PG사 연동 및 통합 관리.
 *   **정산/대사 자동화**: 대사 배치 프로그램, ChargeBack 모니터링 시스템을 구축하여 데이터 정합성 및 운영 안정성 확보.
 *   **레거시 성능 개선**: 레거시 리팩토링, ERD 최적화(데이터 50% 절감), CI/CD 자동화를 통한 개발 생산성 향상.
@@ -57,7 +57,7 @@
     *   **ERD 구조 개선 및 리팩토링**: 데이터 중복 제거를 통해 DB 용량 50% 이상 절감 (**21억 건 → 10억 건 이하**).
     *   **원리금 수취권 매매 시스템 구축**: 투자 유동성 확보를 위한 채권 매매 로직 및 빌링 연동 설계.
     *   기한이익상실, 일부금액 중도상환 등 복잡한 금융 로직 개발.
-    *   **낙관적 락(Optimistic Lock) 도입**: 동시 출금 및 결제 상황에서의 데이터 정합성 보장 및 재시도 로직 구현.
+    *   **비관적 락(Pessimistic Lock) 도입**: 동시 출금 및 결제 상황에서의 데이터 정합성 보장 및 안정적인 트랜잭션 처리.
     *   대출 실행부터 상환, 지급까지의 **자금 흐름 추적성(Traceability)** 개선.
 *   **운영 효율성 및 규제 대응**
     *   변화하는 온투업 법령의 시스템 즉시 반영.
@@ -120,10 +120,11 @@
 *   **[블루월넛]** [레거시 프레임워크 버전 업 및 메모리 누수 최적화 (Jennifer, MAT)](troubleshooting/bluewalnut_memory_leak_optimization.md)
 *   **[에잇퍼센트]** [여신 시스템 ERD 구조 개선 (데이터 50% 절감)](troubleshooting/8percent_erd_optimization.md)
 *   **[에잇퍼센트]** [P2P 원리금 수취권 매매 시스템 및 유동성 개선](troubleshooting/8percent_right_trading_system.md)
+*   **[에잇퍼센트]** [Celery를 이용한 대규모 지급(이체) 처리 비동기 최적화](troubleshooting/8percent_async_transfer_celery.md)
 *   **[페이레터]** [대사 배치 및 이상 거래 탐지 시스템 구축](troubleshooting/payletter_chargeback_detection.md)
 *   **[페이레터/블루월넛]** [PG 웹훅 중복 호출 방지 및 멱등성 보장](troubleshooting/billing_webhook_concurrency_control.md)
 *   **[페이레터]** [빌링 테이블 인덱스 최적화 및 성능 저하 해결](troubleshooting/payletter_index_optimization.md)
-*   **[공통]** [낙관적 락(Optimistic Lock)을 이용한 결제 동시성 제어](troubleshooting/concurrency_control_optimistic_lock.md)
+*   **[공통]** [비관적 락(Pessimistic Lock)을 이용한 결제 동시성 제어](troubleshooting/concurrency_control_optimistic_lock.md)
 
 ### 🎓 학력 사항
 *   **광운대학교** | 컴퓨터소프트웨어학과 (학사) | 3.69 / 4.5
